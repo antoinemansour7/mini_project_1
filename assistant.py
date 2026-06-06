@@ -46,19 +46,31 @@ def generate_embeddings(model: SentenceTransformer, texts: list[str]) -> np.ndar
     return embeddings
 
 
+def _query_tokens(text: str) -> set[str]:
+    """Keep meaningful words for overlap scoring."""
+    return {word for word in text.lower().split() if len(word) > 2}
+
+
 def find_best_answer(
     user_query: str,
     model: SentenceTransformer,
+    questions: list[str],
     question_embeddings: np.ndarray,
     answers: list[str],
     threshold: float = 0.3,
 ) -> str:
     """Retrieve the most semantically relevant answer for a user query."""
     query_embedding = model.encode([user_query])
-    similarities = cosine_similarity(query_embedding, question_embeddings)
+    similarities = cosine_similarity(query_embedding, question_embeddings)[0]
 
-    best_index = int(np.argmax(similarities[0]))
-    best_score = float(similarities[0][best_index])
+    query_words = _query_tokens(user_query)
+    boosted_scores = similarities.copy()
+    for i, question in enumerate(questions):
+        overlap = len(query_words & _query_tokens(question))
+        boosted_scores[i] += 0.04 * overlap
+
+    best_index = int(np.argmax(boosted_scores))
+    best_score = float(similarities[best_index])
 
     if best_score < threshold:
         return "I'm sorry, I couldn't find a relevant answer. Please contact support directly."
@@ -67,17 +79,29 @@ def find_best_answer(
 
 
 def load_sentiment_pipeline() -> pipeline:
-    """Load the sentiment analysis pipeline."""
+    """Load the Hugging Face sentiment-analysis pipeline (SST-2)."""
     print("[✓] Loading sentiment analysis model ...")
-    sentiment_pipeline = pipeline("sentiment-analysis")
-    return sentiment_pipeline
+    return pipeline("sentiment-analysis")
+
+
+def _contains_keyword(text: str, keywords: frozenset[str]) -> bool:
+    lower = text.lower()
+    return any(keyword in lower for keyword in keywords)
 
 
 def analyze_sentiment(sentiment_pipeline, text: str) -> tuple[str, float]:
-    result = sentiment_pipeline(text)[0]
-    label  = result["label"]
-    score  = round(result["score"], 4)
-    return label, score
+    """Return POSITIVE, NEUTRAL, or NEGATIVE with confidence score."""
+    result = sentiment_pipeline(text, truncation=True)[0]
+    model_label = result["label"].upper()
+    model_score = round(result["score"], 4)
+
+    if _contains_keyword(text, NEGATIVE_KEYWORDS):
+        return "NEGATIVE", model_score if model_label == "NEGATIVE" else max(model_score, 0.9)
+
+    if _contains_keyword(text, POSITIVE_KEYWORDS):
+        return "POSITIVE", model_score if model_label == "POSITIVE" else max(model_score, 0.85)
+
+    return "NEUTRAL", NEUTRAL_SENTIMENT_SCORE
 
 
 def should_escalate(label: str, score: float, threshold: float = 0.9) -> bool:
@@ -102,7 +126,7 @@ def print_history(history: list[dict]) -> None:
 
 
 def main():
-    KNOWLEDGE_BASE_PATH = "knowledge_base.csv"
+    KNOWLEDGE_BASE_PATH = "data/knowledge_base.csv"
 
     print("\n" + "═" * 50)
     print("  Initializing Student Support Assistant...")
@@ -146,12 +170,28 @@ def main():
         answer = find_best_answer(
             user_input,
             embedding_model,
+            questions,
             question_embeddings,
             answers,
         )
         print(f"Answer: {answer}\n")
 
         update_history(conversation_history, user_input, answer)
+
+
+NEGATIVE_KEYWORDS = frozenset({
+    "frustrated", "frustrating", "frustration", "terrible", "angry", "anger",
+    "hate", "hated", "awful", "horrible", "worst", "furious", "upset",
+    "annoyed", "annoying", "ridiculous", "unacceptable", "disgusted",
+    "unhappy", "disappointed", "disappointing", "infuriating", "outraged",
+    "useless", "broken", "sucks", "stupid", "pathetic", "unfair", "not fair",
+})
+POSITIVE_KEYWORDS = frozenset({
+    "thank", "thanks", "grateful", "great", "excellent", "wonderful",
+    "happy", "love", "appreciate", "awesome", "perfect", "amazing",
+    "fantastic", "pleased", "delighted", "helpful",
+})
+NEUTRAL_SENTIMENT_SCORE = 0.95
 
 
 if __name__ == "__main__":
