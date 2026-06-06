@@ -4,14 +4,20 @@ Intelligent Student Support Assistant
 with Sentiment Analysis and Semantic Retrieval
 """
 
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import pipeline
 
 
-def load_knowledge_base(filepath: str) -> tuple[list[str], list[str]]:
+PROJECT_DIR = Path(__file__).resolve().parent
+KNOWLEDGE_BASE_PATH = PROJECT_DIR / "data" / "knowledge_base.csv"
+
+
+def load_knowledge_base(filepath: str | Path) -> tuple[list[str], list[str]]:
     """Load questions and answers from a CSV file."""
     try:
         df = pd.read_csv(filepath)
@@ -19,30 +25,35 @@ def load_knowledge_base(filepath: str) -> tuple[list[str], list[str]]:
         if "question" not in df.columns or "answer" not in df.columns:
             raise ValueError("CSV must have 'question' and 'answer' columns.")
 
-        questions = df["question"].tolist()
-        answers   = df["answer"].tolist()
+        questions = df["question"].dropna().astype(str).tolist()
+        answers = df["answer"].dropna().astype(str).tolist()
 
-        print(f"[✓] Knowledge base loaded: {len(questions)} entries from '{filepath}'")
+        if len(questions) != len(answers):
+            raise ValueError("CSV question and answer columns must have the same number of values.")
+        if not questions:
+            raise ValueError("CSV knowledge base is empty.")
+
+        print(f"[OK] Knowledge base loaded: {len(questions)} entries from '{filepath}'")
         return questions, answers
 
     except FileNotFoundError:
-        print(f"[✗] Error: File '{filepath}' not found.")
+        print(f"[ERROR] File '{filepath}' not found.")
         raise
-    except Exception as e:
-        print(f"[✗] Error loading knowledge base: {e}")
+    except Exception as error:
+        print(f"[ERROR] Error loading knowledge base: {error}")
         raise
 
 
 def load_embedding_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
     """Load the embedding model used for semantic search."""
-    print(f"[✓] Loading embedding model: '{model_name}' ...")
-    model = SentenceTransformer(model_name)
-    return model
+    print(f"[OK] Loading embedding model: '{model_name}' ...")
+    return SentenceTransformer(model_name)
 
 
 def generate_embeddings(model: SentenceTransformer, texts: list[str]) -> np.ndarray:
+    """Generate embeddings for knowledge-base questions."""
     embeddings = model.encode(texts, show_progress_bar=False)
-    print(f"[✓] Generated embeddings: matrix shape {embeddings.shape}")
+    print(f"[OK] Generated embeddings: matrix shape {embeddings.shape}")
     return embeddings
 
 
@@ -66,66 +77,65 @@ def find_best_answer(
     return answers[best_index]
 
 
-def load_sentiment_pipeline() -> pipeline:
+def load_sentiment_pipeline(model_name: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"):
     """Load the sentiment analysis pipeline."""
-    print("[✓] Loading sentiment analysis model ...")
-    sentiment_pipeline = pipeline("sentiment-analysis")
-    return sentiment_pipeline
+    print(f"[OK] Loading sentiment analysis model: '{model_name}' ...")
+    return pipeline("sentiment-analysis", model=model_name)
 
 
 def analyze_sentiment(sentiment_pipeline, text: str) -> tuple[str, float]:
+    """Return the sentiment label and confidence score for user text."""
     result = sentiment_pipeline(text)[0]
-    label  = result["label"]
-    score  = round(result["score"], 4)
+    label = str(result["label"]).upper()
+    score = round(float(result["score"]), 4)
     return label, score
 
 
 def should_escalate(label: str, score: float, threshold: float = 0.9) -> bool:
+    """Escalate strongly negative messages to a human advisor."""
     return label == "NEGATIVE" and score >= threshold
 
 
-def update_history(history: list[dict], user_input: str, bot_answer: str) -> None:
+def update_history(history: list[dict[str, str]], user_input: str, bot_answer: str) -> None:
+    """Add one conversation turn to the history."""
     history.append({"user": user_input, "bot": bot_answer})
 
 
-def print_history(history: list[dict]) -> None:
+def print_history(history: list[dict[str, str]]) -> None:
     """Print a summary of the conversation so far."""
-    print("\n" + "═" * 50)
+    print("\n" + "=" * 50)
     print("  CONVERSATION HISTORY")
-    print("═" * 50)
+    print("=" * 50)
     if not history:
         print("  (no messages yet)")
-    for i, turn in enumerate(history, 1):
-        print(f"  [{i}] You : {turn['user']}")
+    for index, turn in enumerate(history, 1):
+        print(f"  [{index}] You : {turn['user']}")
         print(f"       Bot : {turn['bot']}")
         print()
 
 
-def main():
-    KNOWLEDGE_BASE_PATH = "knowledge_base.csv"
-
-    print("\n" + "═" * 50)
+def main() -> None:
+    print("\n" + "=" * 50)
     print("  Initializing Student Support Assistant...")
-    print("═" * 50)
+    print("=" * 50)
 
-    questions, answers         = load_knowledge_base(KNOWLEDGE_BASE_PATH)
-    embedding_model            = load_embedding_model("all-MiniLM-L6-v2")
-    question_embeddings        = generate_embeddings(embedding_model, questions)
-    sentiment_model            = load_sentiment_pipeline()
+    questions, answers = load_knowledge_base(KNOWLEDGE_BASE_PATH)
+    embedding_model = load_embedding_model("all-MiniLM-L6-v2")
+    question_embeddings = generate_embeddings(embedding_model, questions)
+    sentiment_model = load_sentiment_pipeline()
 
-    conversation_history: list[dict] = []
+    conversation_history: list[dict[str, str]] = []
 
-    print("\n" + "═" * 50)
-    print("  Welcome to Concordia Student Support AI  ")
+    print("\n" + "=" * 50)
+    print("  Welcome to Concordia Student Support AI")
     print("  Type 'quit' to exit | 'history' to review")
-    print("═" * 50 + "\n")
+    print("=" * 50 + "\n")
 
     while True:
-
         user_input = input("You: ").strip()
 
         if user_input.lower() == "quit":
-            print("\n[✓] Thank you for using Student Support AI. Goodbye!\n")
+            print("\n[OK] Thank you for using Student Support AI. Goodbye!\n")
             break
 
         if user_input.lower() == "history":
@@ -140,8 +150,8 @@ def main():
         print(f"Sentiment: {label} ({score:.2f})")
 
         if should_escalate(label, score):
-            print("⚠  Recommended escalation: Please contact a human advisor.")
-            print("   📞 Concordia Ombuds Office: 514-848-2424 ext. 3786\n")
+            print("Recommended escalation: Please contact a human advisor.")
+            print("Concordia Ombuds Office: 514-848-2424 ext. 3786\n")
 
         answer = find_best_answer(
             user_input,
