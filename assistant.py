@@ -14,7 +14,7 @@ from transformers import pipeline
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
-KNOWLEDGE_BASE_PATH = PROJECT_DIR / "data" / "knowledge_base.csv"
+KNOWLEDGE_BASE_PATH = PROJECT_DIR / "knowledge_base.csv"
 
 
 def load_knowledge_base(filepath: str | Path) -> tuple[list[str], list[str]]:
