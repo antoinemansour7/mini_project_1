@@ -78,30 +78,30 @@ def find_best_answer(
     return answers[best_index]
 
 
+SENTIMENT_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+SENTIMENT_LABELS = {
+    "LABEL_0": "NEGATIVE",
+    "LABEL_1": "NEUTRAL",
+    "LABEL_2": "POSITIVE",
+}
+
+
 def load_sentiment_pipeline() -> pipeline:
-    """Load the Hugging Face sentiment-analysis pipeline (SST-2)."""
-    print("[✓] Loading sentiment analysis model ...")
-    return pipeline("sentiment-analysis")
-
-
-def _contains_keyword(text: str, keywords: frozenset[str]) -> bool:
-    lower = text.lower()
-    return any(keyword in lower for keyword in keywords)
+    """Load a 3-class sentiment model (negative / neutral / positive)."""
+    print(f"[✓] Loading sentiment analysis model: '{SENTIMENT_MODEL}' ...")
+    return pipeline(
+        "sentiment-analysis",
+        model=SENTIMENT_MODEL,
+        top_k=None,
+    )
 
 
 def analyze_sentiment(sentiment_pipeline, text: str) -> tuple[str, float]:
     """Return POSITIVE, NEUTRAL, or NEGATIVE with confidence score."""
-    result = sentiment_pipeline(text, truncation=True)[0]
-    model_label = result["label"].upper()
-    model_score = round(result["score"], 4)
-
-    if _contains_keyword(text, NEGATIVE_KEYWORDS):
-        return "NEGATIVE", model_score if model_label == "NEGATIVE" else max(model_score, 0.9)
-
-    if _contains_keyword(text, POSITIVE_KEYWORDS):
-        return "POSITIVE", model_score if model_label == "POSITIVE" else max(model_score, 0.85)
-
-    return "NEUTRAL", NEUTRAL_SENTIMENT_SCORE
+    results = sentiment_pipeline(text, truncation=True)[0]
+    best = max(results, key=lambda x: x["score"])
+    label = SENTIMENT_LABELS.get(best["label"], best["label"].upper())
+    return label, round(best["score"], 4)
 
 
 def should_escalate(label: str, score: float, threshold: float = 0.9) -> bool:
@@ -177,21 +177,6 @@ def main():
         print(f"Answer: {answer}\n")
 
         update_history(conversation_history, user_input, answer)
-
-
-NEGATIVE_KEYWORDS = frozenset({
-    "frustrated", "frustrating", "frustration", "terrible", "angry", "anger",
-    "hate", "hated", "awful", "horrible", "worst", "furious", "upset",
-    "annoyed", "annoying", "ridiculous", "unacceptable", "disgusted",
-    "unhappy", "disappointed", "disappointing", "infuriating", "outraged",
-    "useless", "broken", "sucks", "stupid", "pathetic", "unfair", "not fair",
-})
-POSITIVE_KEYWORDS = frozenset({
-    "thank", "thanks", "grateful", "great", "excellent", "wonderful",
-    "happy", "love", "appreciate", "awesome", "perfect", "amazing",
-    "fantastic", "pleased", "delighted", "helpful",
-})
-NEUTRAL_SENTIMENT_SCORE = 0.95
 
 
 if __name__ == "__main__":
